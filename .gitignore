@@ -1,0 +1,28 @@
+# Flutter/Dart/Pub related
+.dart_tool/
+.packages
+.flutter-plugins
+.flutter-plugins-dependencies
+.buildlog/
+build/
+.idea/
+.android/
+.gradle/
+local.properties
+pubspec.lock
+
+# IDEs
+*.iml
+.vscode/
+*.ipr
+*.iws
+
+# macOS
+.DS_Store
+
+# Xcode
+ios/Flutter/Flutter.framework
+ios/Flutter/Flutter.podspec
+Pods/
+Podfile.lock
+lib/utils/secrets.dart

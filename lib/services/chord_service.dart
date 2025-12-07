@@ -1,0 +1,316 @@
+// lib/services/chord_service.dart
+import 'dart:async';
+import 'dart:convert';
+import 'package:flutter/foundation.dart';
+import 'package:html/parser.dart' as html;
+import 'package:http/http.dart' as http;
+import '../models/song.dart';
+import '../utils/secrets.dart';
+
+class ChordService {
+  
+  // Model Options
+  static const String modelQwen = "qwen/qwen-2.5-72b-instruct";
+  static const String modelGemini = "google/gemini-2.0-flash-exp:free";
+  static const String modelLlama = "meta-llama/llama-3.3-70b-instruct";
+
+  // Configuration
+  final String _currentModel = modelQwen; // Default to Qwen
+
+  /// Deep Research Fetch: Search Multiple Sources -> Compile -> LLM Harmonize
+  Future<String> fetchChords(Song song) async {
+    try {
+      if (openRouterApiKey == 'PUT_YOUR_OPENROUTER_KEY_HERE') {
+        return _generateFallback(song, 'Please configure your OpenRouter API Key in lib/utils/secrets.dart');
+      }
+
+      // 1. Perform Deep Research (Parallel Search)
+      print('Starting Deep Research for: ${song.title}');
+      final researchResults = await _performDeepResearch(song);
+      
+      // 2. Harmonize with LLM
+      print('Harmonizing ${researchResults.length} sources with LLM...');
+      final content = await _harmonizeWithLLM(song, researchResults);
+      
+      if (content != null) {
+        return content; // Contains source info footer from LLM
+      }
+    } catch (e) {
+      print('ChordService Error: $e');
+    }
+
+    return _generateFallback(song, 'Could not generate chords.');
+  }
+
+  // --- Deep Research ---
+
+  Future<List<String>> _performDeepResearch(Song song) async {
+    final results = <String>[];
+
+    // Define search queries for different high-quality targets
+    final queries = [
+      '${song.title} ${song.artist} chords site:ultimate-guitar.com',
+      '${song.title} ${song.artist} chords site:azchords.com',
+      '${song.title} ${song.artist} chords site:guitartabs.cc',
+    ];
+
+    // Run searches in parallel
+    final tasks = queries.map((q) => _searchAndScrape(q)).toList();
+    
+    // Add direct search tasks
+    tasks.add(_directSearchGuitarTabsCC(song));
+    
+    // Add Official Lyrics fetch
+    tasks.add(_fetchOfficialLyrics(song));
+
+    // Add Generic Lyric Search (Genius/AZLyrics)
+    tasks.add(_searchAndScrape('${song.title} ${song.artist} lyrics site:genius.com OR site:azlyrics.com'));
+
+    final searchOutputs = await Future.wait(tasks);
+
+    for (var output in searchOutputs) {
+      if (output != null && output.length > 50) { // Lower threshold for lyrics
+        results.add(output);
+      }
+    }
+
+    // Fallback logic...
+    if (results.isEmpty) {
+       print('Site-specific searches failed. Trying generic...');
+       final generic = await _searchAndScrape('${song.title} ${song.artist} chords');
+       if (generic != null) results.add(generic);
+    }
+
+    return results;
+  }
+
+  Future<String?> _fetchOfficialLyrics(Song song) async {
+    try {
+      final url = Uri.parse('https://api.lyrics.ovh/v1/${Uri.encodeComponent(song.artist)}/${Uri.encodeComponent(song.title)}');
+      // lyrics.ovh supports CORS natively (Access-Control-Allow-Origin: *), so no proxy needed even on Web.
+      // Direct fetch is more reliable.
+      final response = await http.get(url, headers: {
+          'User-Agent': 'ChordScan/1.0' // Civilized User-Agent
+      }); 
+      
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final lyrics = data['lyrics'] as String?;
+        if (lyrics != null && lyrics.isNotEmpty) {
+           return "OFFICIAL LYRICS SOURCE (lyrics.ovh):\n$lyrics";
+        }
+      }
+      return null;
+    } catch (e) {
+      print('lyrics.ovh failed: $e');
+      return null;
+    }
+  }
+
+  Future<String?> _directSearchGuitarTabsCC(Song song) async {
+    try {
+      final query = '${song.title} ${song.artist}';
+      // Use HTTPS to avoid Android cleartext blocking
+      final searchUrl = 'https://www.guitartabs.cc/search.php?fm=off&v=${Uri.encodeComponent(query)}';
+      print('GTCC Search: $searchUrl');
+      
+      final searchResp = await _fetchWithProxy(searchUrl);
+      if (searchResp.statusCode != 200) {
+        print('GTCC Search Failed: ${searchResp.statusCode}');
+        return null;
+      }
+
+      final searchDoc = html.parse(searchResp.body);
+      final links = searchDoc.querySelectorAll('a');
+      String? bestLink;
+      
+      for (final link in links) {
+        final href = link.attributes['href'];
+        final text = link.text.toLowerCase();
+        
+        // Looser matching for songs
+        if (href != null && (text.contains('tab') || text.contains('chord'))) {
+           print('GTCC: Found candidate: $text -> $href');
+           bestLink = href;
+           if (!bestLink.startsWith('http')) {
+             bestLink = 'https://www.guitartabs.cc$bestLink';
+           }
+           break; // Take the first relevant result
+        }
+      }
+      
+      if (bestLink == null) {
+        print('GTCC: No relevant link found in ${links.length} results. First text: ${links.firstOrNull?.text}');
+        return null;
+      }
+      
+      print('GTCC: Fetching page: $bestLink');
+      final pageResp = await _fetchWithProxy(bestLink);
+      if (pageResp.statusCode != 200) return null;
+      
+      final pageDoc = html.parse(pageResp.body);
+      final pre = pageDoc.querySelector('pre');
+      if (pre != null) return "Source (guitartabs.cc):\n${pre.text}";
+      
+      print('GTCC: No <pre> tag found on page');
+      return null;
+
+    } catch (e) {
+      print('Direct GTCC search failed: $e');
+      return null;
+    }
+  }
+
+  Future<String?> _searchAndScrape(String query) async {
+    try {
+      // 1. Search DDG
+      print('DDG Search: $query');
+      final searchUrl = 'https://html.duckduckgo.com/html/?q=${Uri.encodeComponent(query)}';
+      final searchResp = await _fetchWithProxy(searchUrl);
+      
+      if (searchResp.statusCode != 200) {
+         print('DDG Search Failed (${searchResp.statusCode}) for: $query');
+         return null;
+      }
+
+      final searchDoc = html.parse(searchResp.body);
+      // Try multiple result selectors
+      final link = searchDoc.querySelector('.result__a')?.attributes['href'] ?? 
+                   searchDoc.querySelector('.result__snippet')?.attributes['href'];
+      
+      if (link == null) {
+        print('DDG: No results found for: $query');
+        return null;
+      }
+
+      // 2. Fetch Page
+      print('DDG: Scaping $link');
+      final pageResp = await _fetchWithProxy(link);
+      if (pageResp.statusCode != 200) {
+        print('Page Fetch Failed (${pageResp.statusCode}): $link');
+        return null;
+      }
+
+      final pageDoc = html.parse(pageResp.body);
+      
+      // 3. Extract best content
+      // Prioritize <pre> tags (tabs), then specific containers, then body
+      final pre = pageDoc.querySelector('pre');
+      if (pre != null) return "Source (${Uri.parse(link).host}):\n${pre.text}";
+      
+      // Generic Lyric Containers (Genius, etc)
+      final lyricContainer = pageDoc.querySelector('[data-lyrics-container="true"]') ?? 
+                             pageDoc.querySelector('.lyrics') ?? 
+                             pageDoc.querySelector('.js-tab-content');
+                             
+      if (lyricContainer != null) {
+         return "Source (${Uri.parse(link).host}):\n${lyricContainer.text.substring(0, 5000)}";
+      }
+
+      return "Source (${Uri.parse(link).host}):\n${pageDoc.body?.text.substring(0, 5000)}"; // Limit size
+
+    } catch (e) {
+      print('Scrape error for "$query": $e');
+      return null;
+    }
+  }
+
+  /// Helper to fetch URL with CORS proxy on Web
+  Future<http.Response> _fetchWithProxy(String url) async {
+    String targetUrl = url;
+    if (kIsWeb) {
+      targetUrl = 'https://corsproxy.io/?${Uri.encodeComponent(url)}';
+    }
+
+    try {
+      final response = await http.get(Uri.parse(targetUrl), headers: {
+        'User-Agent':
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+      });
+      print('Fetch [$url] -> ${response.statusCode}');
+      return response;
+    } catch (e) {
+      print('Fetch Exception [$url]: $e');
+      rethrow;
+    }
+  }
+
+  // --- LLM Harmonization ---
+
+  Future<String?> _harmonizeWithLLM(Song song, List<String> sources) async {
+    final url = Uri.parse('https://openrouter.ai/api/v1/chat/completions');
+    
+    // Construct Context
+    final sb = StringBuffer();
+    bool isGenerationMode = sources.isEmpty;
+
+    if (!isGenerationMode) {
+      sb.writeln("I have found the following potential versions from the web:");
+      for (int i = 0; i < sources.length; i++) {
+        sb.writeln("--- VERSION ${i + 1} ---");
+        final s = sources[i];
+        sb.writeln(s.length > 3000 ? s.substring(0, 3000) : s);
+        sb.writeln("---------------------");
+      }
+    } else {
+      sb.writeln("Research failed to find specific versions. PLEASE GENERATE FROM YOUR TRAINING DATA.");
+      sb.writeln("IMPORTANT: You must output the FULL LYRICS with Chords. Do not output chords only.");
+    }
+
+    final systemPrompt = """
+You are a Music Director and Expert Transcriber.
+Your goal is to create the **Definitive Master Chord Sheet** for "${song.title}" by "${song.artist}".
+
+TASK:
+${isGenerationMode ? "1. **GENERATE**: Write the full song (Lyrics + Chords) from memory/training data." : "1. **Analyze**: Look at all provided versions."}
+${isGenerationMode ? "2. **Structure**: Include all Verses and Choruses. VERIFY lyrics are the OFFICIAL CLEAN RADIO EDIT. Do NOT use parody or wrong lyrics." : "2. **Harmonize**: Combine the best parts. Overlay chords onto official lyrics if available."}
+3.  **Format**: strict "Chords over Lyrics" format. standard tuning.
+4.  **Output**: Return ONLY the chord sheet. No intro/outro/markdown.
+
+CRITICAL: The output MUST include the lyrics. Do not just list the chords. USE STANDARD ENGLISH LYRICS.
+
+Add a footer line: "[Compiled from ${sources.length} sources by $_currentModel]"
+""";
+
+    final response = await http.post(
+      url,
+      headers: {
+        'Authorization': 'Bearer $openRouterApiKey',
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({
+        "model": _currentModel,
+        "messages": [
+          {
+            "role": "system",
+            "content": systemPrompt
+          },
+          {
+            "role": "user",
+            "content": sb.toString()
+          }
+        ]
+      }),
+    );
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      return data['choices']?[0]?['message']?['content'] as String?;
+    } else {
+      print('OpenRouter Error: ${response.statusCode} ${response.body}');
+      return null;
+    }
+  }
+
+  String _generateFallback(Song song, String reason) {
+    final query = Uri.encodeComponent('${song.title} ${song.artist} chords');
+    return '''
+$reason
+
+Try searching online:
+https://www.ultimate-guitar.com/search.php?search_type=title&value=$query
+
+Or add them manually by tapping "Edit".
+''';
+  }
+}
