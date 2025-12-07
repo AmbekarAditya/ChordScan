@@ -13,9 +13,11 @@ class ChordService {
   static const String modelQwen = "qwen/qwen-2.5-72b-instruct";
   static const String modelGemini = "google/gemini-2.0-flash-exp:free";
   static const String modelLlama = "meta-llama/llama-3.3-70b-instruct";
+  static const String modelAmazon = "amazon/nova-2-lite-v1:free";
+  static const String modelQwenCoder = "qwen/qwen-2.5-coder-32b-instruct:free";
 
   // Configuration
-  final String _currentModel = modelQwen; // Default to Qwen
+  final String _currentModel = modelQwenCoder; // Default to Qwen Coder
 
   /// Deep Research Fetch: Search Multiple Sources -> Compile -> LLM Harmonize
   Future<String> fetchChords(Song song) async {
@@ -37,9 +39,10 @@ class ChordService {
       }
     } catch (e) {
       print('ChordService Error: $e');
+      return _generateFallback(song, 'Error: $e');
     }
 
-    return _generateFallback(song, 'Could not generate chords.');
+    return _generateFallback(song, 'Could not generate chords (Unknown Error).');
   }
 
   // --- Deep Research ---
@@ -86,12 +89,10 @@ class ChordService {
 
   Future<String?> _fetchOfficialLyrics(Song song) async {
     try {
-      final url = Uri.parse('https://api.lyrics.ovh/v1/${Uri.encodeComponent(song.artist)}/${Uri.encodeComponent(song.title)}');
-      // lyrics.ovh supports CORS natively (Access-Control-Allow-Origin: *), so no proxy needed even on Web.
-      // Direct fetch is more reliable.
-      final response = await http.get(url, headers: {
-          'User-Agent': 'ChordScan/1.0' // Civilized User-Agent
-      }); 
+      final url = 'https://api.lyrics.ovh/v1/${Uri.encodeComponent(song.artist)}/${Uri.encodeComponent(song.title)}';
+      
+      // Use proxy (even for lyrics.ovh) to ensure consistent CORS behavior on Web
+      final response = await _fetchWithProxy(url);
       
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
@@ -219,7 +220,8 @@ class ChordService {
   Future<http.Response> _fetchWithProxy(String url) async {
     String targetUrl = url;
     if (kIsWeb) {
-      targetUrl = 'https://corsproxy.io/?${Uri.encodeComponent(url)}';
+      // corsproxy.io is blocked by Cloudflare. Switching to allorigins.
+      targetUrl = 'https://api.allorigins.win/raw?url=${Uri.encodeComponent(url)}';
     }
 
     try {
@@ -272,40 +274,48 @@ CRITICAL: The output MUST include the lyrics. Do not just list the chords. USE S
 Add a footer line: "[Compiled from ${sources.length} sources by $_currentModel]"
 """;
 
-    final response = await http.post(
-      url,
-      headers: {
-        'Authorization': 'Bearer $openRouterApiKey',
-        'Content-Type': 'application/json',
-      },
-      body: jsonEncode({
-        "model": _currentModel,
-        "messages": [
-          {
-            "role": "system",
-            "content": systemPrompt
-          },
-          {
-            "role": "user",
-            "content": sb.toString()
-          }
-        ]
-      }),
-    );
+    try {
+      final response = await http.post(
+        url,
+        headers: {
+          'Authorization': 'Bearer $openRouterApiKey',
+          'Content-Type': 'application/json',
+          // 'Or-Site-Url': 'https://ambekaraditya.github.io/ChordScan/', // Optional: for OpenRouter rankings
+          // 'Or-App-Name': 'ChordScan',
+        },
+        body: jsonEncode({
+          "model": _currentModel,
+          "messages": [
+            {
+              "role": "system",
+              "content": systemPrompt
+            },
+            {
+              "role": "user",
+              "content": sb.toString()
+            }
+          ]
+        }),
+      );
 
-    if (response.statusCode == 200) {
-      final data = jsonDecode(response.body);
-      return data['choices']?[0]?['message']?['content'] as String?;
-    } else {
-      print('OpenRouter Error: ${response.statusCode} ${response.body}');
-      return null;
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return data['choices']?[0]?['message']?['content'] as String?;
+      } else {
+        print('OpenRouter Error: ${response.statusCode} ${response.body}');
+        throw Exception('OpenRouter ${response.statusCode}'); // Throw to trigger custom error msg
+      }
+    } catch(e) {
+       print("LLM Error: $e");
+       rethrow;
     }
   }
 
   String _generateFallback(Song song, String reason) {
     final query = Uri.encodeComponent('${song.title} ${song.artist} chords');
     return '''
-$reason
+Could not generate chords.
+Error: $reason
 
 Try searching online:
 https://www.ultimate-guitar.com/search.php?search_type=title&value=$query
