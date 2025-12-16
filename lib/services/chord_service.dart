@@ -91,8 +91,8 @@ class ChordService {
     try {
       final url = 'https://api.lyrics.ovh/v1/${Uri.encodeComponent(song.artist)}/${Uri.encodeComponent(song.title)}';
       
-      // Use proxy (even for lyrics.ovh) to ensure consistent CORS behavior on Web
-      final response = await _fetchWithProxy(url);
+      // Use direct fetch (lyrics.ovh supports CORS) instead of proxy, which is being flaky.
+      final response = await http.get(Uri.parse(url));
       
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);

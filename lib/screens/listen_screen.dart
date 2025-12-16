@@ -32,7 +32,7 @@ class _ListenScreenState extends State<ListenScreen> {
     if (_scanning) return;
     setState(() {
       _scanning = true;
-      _amplitudes = List.filled(30, 0.0);
+      _amplitudes = List.filled(30, 0.0, growable: true);
     });
 
     // Start listening to amplitude
