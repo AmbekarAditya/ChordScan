@@ -22,7 +22,7 @@ class ChordService {
   /// Deep Research Fetch: Search Multiple Sources -> Compile -> LLM Harmonize
   Future<String> fetchChords(Song song) async {
     try {
-      if (openRouterApiKey == 'PUT_YOUR_OPENROUTER_KEY_HERE') {
+      if (Secrets.openRouterApiKey == 'PUT_YOUR_OPENROUTER_KEY_HERE') {
         return _generateFallback(song, 'Please configure your OpenRouter API Key in lib/utils/secrets.dart');
       }
 
@@ -215,10 +215,12 @@ class ChordService {
                              pageDoc.querySelector('.js-tab-content');
                              
       if (lyricContainer != null) {
-         return "Source (${Uri.parse(link).host}):\n${lyricContainer.text.substring(0, 5000)}";
+         final text = lyricContainer.text;
+         return "Source (${Uri.parse(link).host}):\n${text.length > 5000 ? text.substring(0, 5000) : text}";
       }
 
-      return "Source (${Uri.parse(link).host}):\n${pageDoc.body?.text.substring(0, 5000)}"; // Limit size
+      final bodyText = pageDoc.body?.text ?? "";
+      return "Source (${Uri.parse(link).host}):\n${bodyText.length > 5000 ? bodyText.substring(0, 5000) : bodyText}";
 
     } catch (e) {
       print('Scrape error for "$query": $e');
@@ -285,10 +287,11 @@ Add a footer line: "[Compiled from ${sources.length} sources by $_currentModel]"
 """;
 
     try {
+      print('OpenRouter: Sending request with key prefix: ${Secrets.openRouterApiKey.substring(0, 10)}...');
       final response = await http.post(
         url,
         headers: {
-          'Authorization': 'Bearer $openRouterApiKey',
+          'Authorization': 'Bearer ${Secrets.openRouterApiKey}',
           'Content-Type': 'application/json',
           // 'Or-Site-Url': 'https://ambekaraditya.github.io/ChordScan/', // Optional: for OpenRouter rankings
           // 'Or-App-Name': 'ChordScan',

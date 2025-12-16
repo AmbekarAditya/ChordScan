@@ -29,7 +29,7 @@ class _SongScreenState extends State<SongScreen> {
 
     if (args != null && args is Song) {
       _song = args;
-      appState.setSelectedSong(_song);
+      Future.microtask(() => appState.setSelectedSong(_song));
     } else {
       _song = appState.selectedSong;
     }
