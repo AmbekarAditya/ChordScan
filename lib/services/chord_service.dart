@@ -205,6 +205,12 @@ class ChordService {
         }
       }
 
+      // GUARD: Don't scrape DuckDuckGo itself (ads, y.js, tracking)
+      if (targetLink.contains('duckduckgo.com')) {
+         print('DDG: Skipping internal/ad link: $targetLink');
+         return null;
+      }
+
       print('DDG: Scaping $targetLink');
       final pageResp = await _fetchWithProxy(targetLink);
       if (pageResp.statusCode != 200) {
