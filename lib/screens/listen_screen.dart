@@ -88,7 +88,9 @@ class _ListenScreenState extends State<ListenScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 20),
           child: Column(mainAxisSize: MainAxisSize.min, children: [
             const Text('Tap to Listen', textAlign: TextAlign.center, style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 40),
+            const SizedBox(height: 10),
+            const Text('v1.3 (Clean Scraper)', style: TextStyle(fontSize: 12, color: Colors.grey)),
+            const SizedBox(height: 30),
             
             if (_scanning)
               Column(children: [
