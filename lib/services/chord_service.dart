@@ -242,13 +242,25 @@ class ChordService {
       final pre = pageDoc.querySelector('js-tab-content') ?? pageDoc.querySelector('pre');
       if (pre != null && pre.text.length > 50) return "Source (${Uri.parse(targetLink).host}):\n${pre.text}";
       
-      // Cleanup Body Fallback (Remove Scripts/JSON-LD)
+      // Cleanup Body Fallback (Remove Scripts/JSON-LD/Styles)
       pageDoc.querySelectorAll('script').forEach((e) => e.remove());
       pageDoc.querySelectorAll('style').forEach((e) => e.remove());
+      pageDoc.querySelectorAll('meta').forEach((e) => e.remove());
+      pageDoc.querySelectorAll('link').forEach((e) => e.remove());
+      pageDoc.querySelectorAll('noscript').forEach((e) => e.remove());
       
-      final bodyText = pageDoc.body?.text.trim() ?? "";
-      // If it looks like JSON, skip it.
-      if (bodyText.startsWith('{') || bodyText.startsWith('var ')) return null;
+      var bodyText = pageDoc.body?.text.trim() ?? "";
+      
+      // Post-Processing: Remove lines that look like JSON or CSS
+      // Remove lines starting with { or " or . or @
+      bodyText = bodyText.split('\n').where((line) {
+        final l = line.trim();
+        if (l.isEmpty) return false;
+        if (l.startsWith('{') || l.startsWith('"') || l.startsWith('.') || l.startsWith('@')) return false;
+        if (l.contains('function()')) return false;
+        if (l.length < 3) return false; // fast filter noise
+        return true;
+      }).join('\n');
 
       return "Source (${Uri.parse(targetLink).host}):\n${bodyText.length > 5000 ? bodyText.substring(0, 5000) : bodyText}";
 
