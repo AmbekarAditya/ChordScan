@@ -230,21 +230,38 @@ class ChordService {
 
   /// Helper to fetch URL with CORS proxy on Web
   Future<http.Response> _fetchWithProxy(String url) async {
-    String targetUrl = url;
-    if (kIsWeb) {
-      // corsproxy.io is blocked by Cloudflare. Switching to allorigins.
-      targetUrl = 'https://api.allorigins.win/raw?url=${Uri.encodeComponent(url)}';
+    if (!kIsWeb) {
+      return http.get(Uri.parse(url), headers: {'User-Agent': 'ChordScan/1.0'});
     }
 
+    // 1. Primary: AllOrigins
     try {
-      final response = await http.get(Uri.parse(targetUrl), headers: {
-        'User-Agent':
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-      });
-      print('Fetch [$url] -> ${response.statusCode}');
-      return response;
+      final target = 'https://api.allorigins.win/raw?url=${Uri.encodeComponent(url)}';
+      final response = await http.get(Uri.parse(target));
+      if (response.statusCode == 200) return response;
+      print('Proxy 1 (AllOrigins) failed: ${response.statusCode}');
     } catch (e) {
-      print('Fetch Exception [$url]: $e');
+      print('Proxy 1 (AllOrigins) error: $e');
+    }
+
+    // 2. Secondary: ThingProxy
+    try {
+      print('Switching to Proxy 2 (ThingProxy)...');
+      final target = 'https://thingproxy.freeboard.io/fetch/$url';
+      final response = await http.get(Uri.parse(target));
+      if (response.statusCode == 200) return response;
+      print('Proxy 2 (ThingProxy) failed: ${response.statusCode}');
+    } catch (e) {
+      print('Proxy 2 (ThingProxy) error: $e');
+    }
+
+    // 3. Tertiary: CORSProxy.io (often blocked, but worth a shot)
+    try {
+      print('Switching to Proxy 3 (CORSProxy)...');
+      final target = 'https://corsproxy.io/?${Uri.encodeComponent(url)}';
+      return await http.get(Uri.parse(target));
+    } catch (e) {
+      print('All Proxies Failed for $url: $e');
       rethrow;
     }
   }
