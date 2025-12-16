@@ -246,8 +246,7 @@ class ChordService {
 
       return "Source (${Uri.parse(link).host}):\n${bodyText.length > 5000 ? bodyText.substring(0, 5000) : bodyText}";
 
-      final bodyText = pageDoc.body?.text ?? "";
-      return "Source (${Uri.parse(link).host}):\n${bodyText.length > 5000 ? bodyText.substring(0, 5000) : bodyText}";
+
 
     } catch (e) {
       print('Scrape error for "$query": $e');
