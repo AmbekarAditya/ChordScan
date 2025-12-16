@@ -240,7 +240,7 @@ class ChordService {
       // 3. Extract best content
       // Prioritize <pre> tags (tabs), then specific containers
       final pre = pageDoc.querySelector('js-tab-content') ?? pageDoc.querySelector('pre');
-      if (pre != null && pre.text.length > 50) return "Source (${Uri.parse(link).host}):\n${pre.text}";
+      if (pre != null && pre.text.length > 50) return "Source (${Uri.parse(targetLink).host}):\n${pre.text}";
       
       // Cleanup Body Fallback (Remove Scripts/JSON-LD)
       pageDoc.querySelectorAll('script').forEach((e) => e.remove());
@@ -250,7 +250,7 @@ class ChordService {
       // If it looks like JSON, skip it.
       if (bodyText.startsWith('{') || bodyText.startsWith('var ')) return null;
 
-      return "Source (${Uri.parse(link).host}):\n${bodyText.length > 5000 ? bodyText.substring(0, 5000) : bodyText}";
+      return "Source (${Uri.parse(targetLink).host}):\n${bodyText.length > 5000 ? bodyText.substring(0, 5000) : bodyText}";
 
 
 
