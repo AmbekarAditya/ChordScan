@@ -185,10 +185,20 @@ class ChordService {
       }
 
       // 2. Fetch Page
-      print('DDG: Scaping $link');
-      final pageResp = await _fetchWithProxy(link);
+      var targetLink = link;
+      if (link.contains('duckduckgo.com/l/')) {
+        final uri = Uri.parse(link.startsWith('//') ? 'https:$link' : link);
+        final uddg = uri.queryParameters['uddg'];
+        if (uddg != null) {
+          targetLink = uddg;
+          print('DDG: Decoded redirect -> $targetLink');
+        }
+      }
+
+      print('DDG: Scaping $targetLink');
+      final pageResp = await _fetchWithProxy(targetLink);
       if (pageResp.statusCode != 200) {
-        print('Page Fetch Failed (${pageResp.statusCode}): $link');
+        print('Page Fetch Failed (${pageResp.statusCode}): $targetLink');
         return null;
       }
 
