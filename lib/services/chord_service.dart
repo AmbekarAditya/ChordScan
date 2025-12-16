@@ -21,6 +21,8 @@ class ChordService {
 
   /// Deep Research Fetch: Search Multiple Sources -> Compile -> LLM Harmonize
   Future<String> fetchChords(Song song) async {
+    List<String> researchResults = [];
+    
     try {
       if (Secrets.openRouterApiKey == 'PUT_YOUR_OPENROUTER_KEY_HERE') {
         return _generateFallback(song, 'Please configure your OpenRouter API Key in lib/utils/secrets.dart');
@@ -28,7 +30,7 @@ class ChordService {
 
       // 1. Perform Deep Research (Parallel Search)
       print('Starting Deep Research for: ${song.title}');
-      final researchResults = await _performDeepResearch(song);
+      researchResults = await _performDeepResearch(song);
       
       // 2. Harmonize with LLM
       print('Harmonizing ${researchResults.length} sources with LLM...');
@@ -39,7 +41,15 @@ class ChordService {
       }
     } catch (e) {
       print('ChordService Error: $e');
-      return _generateFallback(song, 'Error: $e');
+      
+      // FALLBACK: If LLM fails (e.g. 401), but we found raw research, return that!
+      if (researchResults.isNotEmpty) {
+         print('LLM failed, but returning raw research.');
+         // We simply join the raw text. It won't be pretty (HTML stripped), but it's readable content.
+         final rawContent = researchResults.map((r) => "--- SOURCE OPTION ---\n$r").join("\n\n");
+         return "AUTOMATED HARMONIZATION FAILED (API Error). PROVISIONAL RAW RESULTS:\n\n$rawContent\n\n(Error Detail: $e)";
+      }
+      return _generateFallback(song, 'Error: $e. (Try adding manual chords)'); 
     }
 
     return _generateFallback(song, 'Could not generate chords (Unknown Error).');
