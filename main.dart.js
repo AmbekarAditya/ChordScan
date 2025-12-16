@@ -42603,7 +42603,7 @@ q="Source (Ultimate-Guitar):\n"+a3
 s=1
 break $async$outer}}}}}b0=new A.jm().nz(0,e,A.rO("js-tab-content"))
 a0=b0==null?new A.jm().nz(0,e,A.rO("pre")):b0
-if(a0!=null&&A.a_Y(a0).length>50){a3=A.e0(j,0,null)
+if(a0!=null&&A.a_Y(a0).length>50){a3=A.e0(i,0,null)
 a3=a3.glX(a3)
 a5=A.a_Y(a0)
 q="Source ("+a3+"):\n"+a5
@@ -42616,7 +42616,7 @@ b1=a3==null?null:B.c.l2(A.a_Y(a3))
 a1=b1==null?"":b1
 if(J.azI(a1,"{")||J.azI(a1,"var ")){q=null
 s=1
-break}a3=A.e0(j,0,null)
+break}a3=A.e0(i,0,null)
 a3=a3.glX(a3)
 a5=A.n(J.cd(a1)>5000?J.aK4(a1,0,5000):a1)
 q="Source ("+a3+"):\n"+a5
