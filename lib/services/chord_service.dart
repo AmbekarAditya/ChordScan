@@ -214,20 +214,37 @@ class ChordService {
 
       final pageDoc = html.parse(pageResp.body);
       
-      // 3. Extract best content
-      // Prioritize <pre> tags (tabs), then specific containers, then body
-      final pre = pageDoc.querySelector('pre');
-      if (pre != null) return "Source (${Uri.parse(link).host}):\n${pre.text}";
-      
-      // Generic Lyric Containers (Genius, etc)
-      final lyricContainer = pageDoc.querySelector('[data-lyrics-container="true"]') ?? 
-                             pageDoc.querySelector('.lyrics') ?? 
-                             pageDoc.querySelector('.js-tab-content');
-                             
-      if (lyricContainer != null) {
-         final text = lyricContainer.text;
-         return "Source (${Uri.parse(link).host}):\n${text.length > 5000 ? text.substring(0, 5000) : text}";
+      // SPECIAL HANDLING: Ultimate-Guitar store config (where the real tab lives)
+      if (targetLink.contains('ultimate-guitar.com')) {
+         final scripts = pageDoc.querySelectorAll('script');
+         for (final script in scripts) {
+           if (script.text.contains('content') && script.text.contains('[tab]')) {
+             // Try to regex extract the tab content from their JSON store
+             final tabMatch = RegExp(r'&quot;content&quot;:&quot;(.*?)&quot;').firstMatch(script.text);
+             if (tabMatch != null) {
+               String rawVal = tabMatch.group(1) ?? "";
+               // Unescape basic chars
+               rawVal = rawVal.replaceAll(r'\r\n', '\n').replaceAll(r'\n', '\n').replaceAll(r'\"', '"');
+               if (rawVal.length > 50) return "Source (Ultimate-Guitar):\n$rawVal";
+             }
+           }
+         }
       }
+
+      // 3. Extract best content
+      // Prioritize <pre> tags (tabs), then specific containers
+      final pre = pageDoc.querySelector('js-tab-content') ?? pageDoc.querySelector('pre');
+      if (pre != null && pre.text.length > 50) return "Source (${Uri.parse(link).host}):\n${pre.text}";
+      
+      // Cleanup Body Fallback (Remove Scripts/JSON-LD)
+      pageDoc.querySelectorAll('script').forEach((e) => e.remove());
+      pageDoc.querySelectorAll('style').forEach((e) => e.remove());
+      
+      final bodyText = pageDoc.body?.text.trim() ?? "";
+      // If it looks like JSON, skip it.
+      if (bodyText.startsWith('{') || bodyText.startsWith('var ')) return null;
+
+      return "Source (${Uri.parse(link).host}):\n${bodyText.length > 5000 ? bodyText.substring(0, 5000) : bodyText}";
 
       final bodyText = pageDoc.body?.text ?? "";
       return "Source (${Uri.parse(link).host}):\n${bodyText.length > 5000 ? bodyText.substring(0, 5000) : bodyText}";
