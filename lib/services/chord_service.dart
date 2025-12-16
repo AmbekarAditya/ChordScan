@@ -74,10 +74,10 @@ class ChordService {
     tasks.add(_directSearchGuitarTabsCC(song));
     
     // Add Official Lyrics fetch
-    tasks.add(_fetchOfficialLyrics(song));
+    // tasks.add(_fetchOfficialLyrics(song));
 
     // Add Generic Lyric Search (Genius/AZLyrics)
-    tasks.add(_searchAndScrape('${song.title} ${song.artist} lyrics site:genius.com OR site:azlyrics.com'));
+    // tasks.add(_searchAndScrape('${song.title} ${song.artist} lyrics site:genius.com OR site:azlyrics.com'));
 
     final searchOutputs = await Future.wait(tasks);
 
