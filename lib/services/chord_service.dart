@@ -24,65 +24,84 @@ class ChordService {
     List<String> researchResults = [];
     
     try {
-      if (Secrets.openRouterApiKey == 'PUT_YOUR_OPENROUTER_KEY_HERE') {
-        return _generateFallback(song, 'Please configure your OpenRouter API Key in lib/utils/secrets.dart');
-      }
-
       // 1. Perform Deep Research (Parallel Search)
       print('Starting Deep Research for: ${song.title}');
       researchResults = await _performDeepResearch(song);
+
+      if (Secrets.openRouterApiKey == 'PUT_YOUR_OPENROUTER_KEY_HERE' ||
+          Secrets.openRouterApiKey.isEmpty) {
+        if (researchResults.isNotEmpty) {
+          return _formatBestScrapedResult(researchResults);
+        }
+        return _generateFallback(song, 'Please configure your OpenRouter API Key in lib/utils/secrets.dart');
+      }
       
       // 2. Harmonize with LLM
       print('Harmonizing ${researchResults.length} sources with LLM...');
       final content = await _harmonizeWithLLM(song, researchResults);
       
-      if (content != null) {
+      if (content != null && content.trim().isNotEmpty) {
         return content; // Contains source info footer from LLM
       }
     } catch (e) {
       print('ChordService Error: $e');
       
-      // FALLBACK: If LLM fails (e.g. 401), but we found raw research, return that!
+      // FALLBACK: If LLM fails (e.g. 401), but we found research, return the clean scraped chord sheet!
       if (researchResults.isNotEmpty) {
-         print('LLM failed, but returning raw research.');
-         // We simply join the raw text. It won't be pretty (HTML stripped), but it's readable content.
-         final rawContent = researchResults.map((r) => "--- SOURCE OPTION ---\n$r").join("\n\n");
-         return "AUTOMATED HARMONIZATION FAILED (API Error). PROVISIONAL RAW RESULTS:\n\n$rawContent\n\n(Error Detail: $e)";
+        print('LLM unavailable ($e), returning clean scraped chord sheet.');
+        return _formatBestScrapedResult(researchResults);
       }
       return _generateFallback(song, 'Error: $e. (Try adding manual chords)'); 
     }
 
-    return _generateFallback(song, 'Could not generate chords (Unknown Error).');
+    if (researchResults.isNotEmpty) {
+      return _formatBestScrapedResult(researchResults);
+    }
+    return _generateFallback(song, 'Could not generate chords (No sources found).');
+  }
+
+  String _formatBestScrapedResult(List<String> researchResults) {
+    // Prefer Ultimate-Guitar if present, otherwise take the first clean result
+    final ugResult = researchResults.where((r) => r.contains('Ultimate-Guitar') || r.contains('ultimate-guitar.com')).firstOrNull;
+    if (ugResult != null) {
+      return ugResult;
+    }
+    return researchResults.first;
   }
 
   // --- Deep Research ---
 
+  /// Strip parenthetical/bracketed metadata like (From "Kabir Singh"), [feat. ...], etc.
+  String _cleanQueryPart(String input) {
+    return input
+        .replaceAll(RegExp(r'\s*[\(\[][^\)\]]*[\)\]]'), '')
+        .replaceAll(RegExp(r'\s*-\s*(Remaster|From|Live|Radio|Single| Soundtrack).*', caseSensitive: false), '')
+        .replaceAll('"', '')
+        .trim();
+  }
+
   Future<List<String>> _performDeepResearch(Song song) async {
     final results = <String>[];
 
+    final cleanTitle = _cleanQueryPart(song.title);
+    final cleanArtist = _cleanQueryPart(song.artist);
+    final baseQuery = '$cleanTitle $cleanArtist'.trim();
+
     // Define search queries for different high-quality targets
     final queries = [
-      '${song.title} ${song.artist} chords site:ultimate-guitar.com',
-      '${song.title} ${song.artist} chords site:azchords.com',
-      '${song.title} ${song.artist} chords site:guitartabs.cc',
+      '$baseQuery chords site:ultimate-guitar.com',
+      if (cleanTitle.isNotEmpty) '$cleanTitle chords site:ultimate-guitar.com',
+      '$baseQuery chords site:azchords.com',
+      '$baseQuery chords site:guitartabs.cc',
     ];
 
     // Run searches in parallel
     final tasks = queries.map((q) => _searchAndScrape(q)).toList();
-    
-    // Add direct search tasks
-    tasks.add(_directSearchGuitarTabsCC(song));
-    
-    // Add Official Lyrics fetch
-    // tasks.add(_fetchOfficialLyrics(song));
-
-    // Add Generic Lyric Search (Genius/AZLyrics)
-    // tasks.add(_searchAndScrape('${song.title} ${song.artist} lyrics site:genius.com OR site:azlyrics.com'));
 
     final searchOutputs = await Future.wait(tasks);
 
     for (var output in searchOutputs) {
-      if (output != null && output.length > 50) { // Lower threshold for lyrics
+      if (output != null && output.length > 50) {
         results.add(output);
       }
     }
@@ -90,86 +109,11 @@ class ChordService {
     // Fallback logic...
     if (results.isEmpty) {
        print('Site-specific searches failed. Trying generic...');
-       final generic = await _searchAndScrape('${song.title} ${song.artist} chords');
+       final generic = await _searchAndScrape('$baseQuery chords');
        if (generic != null) results.add(generic);
     }
 
     return results;
-  }
-
-  Future<String?> _fetchOfficialLyrics(Song song) async {
-    try {
-      final url = 'https://api.lyrics.ovh/v1/${Uri.encodeComponent(song.artist)}/${Uri.encodeComponent(song.title)}';
-      
-      // Use direct fetch (lyrics.ovh supports CORS) instead of proxy, which is being flaky.
-      final response = await http.get(Uri.parse(url));
-      
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        final lyrics = data['lyrics'] as String?;
-        if (lyrics != null && lyrics.isNotEmpty) {
-           return "OFFICIAL LYRICS SOURCE (lyrics.ovh):\n$lyrics";
-        }
-      }
-      return null;
-    } catch (e) {
-      print('lyrics.ovh failed: $e');
-      return null;
-    }
-  }
-
-  Future<String?> _directSearchGuitarTabsCC(Song song) async {
-    try {
-      final query = '${song.title} ${song.artist}';
-      // Use HTTPS to avoid Android cleartext blocking
-      final searchUrl = 'https://www.guitartabs.cc/search.php?fm=off&v=${Uri.encodeComponent(query)}';
-      print('GTCC Search: $searchUrl');
-      
-      final searchResp = await _fetchWithProxy(searchUrl);
-      if (searchResp.statusCode != 200) {
-        print('GTCC Search Failed: ${searchResp.statusCode}');
-        return null;
-      }
-
-      final searchDoc = html.parse(searchResp.body);
-      final links = searchDoc.querySelectorAll('a');
-      String? bestLink;
-      
-      for (final link in links) {
-        final href = link.attributes['href'];
-        final text = link.text.toLowerCase();
-        
-        // Looser matching for songs
-        if (href != null && (text.contains('tab') || text.contains('chord'))) {
-           print('GTCC: Found candidate: $text -> $href');
-           bestLink = href;
-           if (!bestLink.startsWith('http')) {
-             bestLink = 'https://www.guitartabs.cc$bestLink';
-           }
-           break; // Take the first relevant result
-        }
-      }
-      
-      if (bestLink == null) {
-        print('GTCC: No relevant link found in ${links.length} results. First text: ${links.firstOrNull?.text}');
-        return null;
-      }
-      
-      print('GTCC: Fetching page: $bestLink');
-      final pageResp = await _fetchWithProxy(bestLink);
-      if (pageResp.statusCode != 200) return null;
-      
-      final pageDoc = html.parse(pageResp.body);
-      final pre = pageDoc.querySelector('pre');
-      if (pre != null) return "Source (guitartabs.cc):\n${pre.text}";
-      
-      print('GTCC: No <pre> tag found on page');
-      return null;
-
-    } catch (e) {
-      print('Direct GTCC search failed: $e');
-      return null;
-    }
   }
 
   Future<String?> _searchAndScrape(String query) async {
@@ -184,92 +128,128 @@ class ChordService {
          return null;
       }
 
-      final searchDoc = html.parse(searchResp.body);
-      // Try multiple result selectors
-      final link = searchDoc.querySelector('.result__a')?.attributes['href'] ?? 
-                   searchDoc.querySelector('.result__snippet')?.attributes['href'];
+      String? targetLink;
+
+      // Extract first non-ad DuckDuckGo redirect URL (works for both HTML and Jina Markdown)
+      final uddgMatches = RegExp(r'uddg=([^&\s\)"\x27]+)').allMatches(searchResp.body);
+      for (final m in uddgMatches) {
+        final raw = m.group(1);
+        if (raw != null) {
+          final decoded = Uri.decodeComponent(raw);
+          if (decoded.startsWith('http') && !decoded.contains('duckduckgo.com')) {
+            targetLink = decoded;
+            print('DDG: Decoded redirect -> $targetLink');
+            break;
+          }
+        }
+      }
+
+      if (targetLink == null) {
+        final searchDoc = html.parse(searchResp.body);
+        final link = searchDoc.querySelector('.result__a')?.attributes['href'] ?? 
+                     searchDoc.querySelector('.result__snippet')?.attributes['href'];
+        if (link != null && !link.contains('duckduckgo.com')) {
+          targetLink = link;
+        }
+      }
       
-      if (link == null) {
+      if (targetLink == null) {
         print('DDG: No results found for: $query');
         return null;
       }
 
-      // 2. Fetch Page
-      var targetLink = link;
-      if (link.contains('duckduckgo.com/l/')) {
-        final uri = Uri.parse(link.startsWith('//') ? 'https:$link' : link);
-        final uddg = uri.queryParameters['uddg'];
-        if (uddg != null) {
-          targetLink = uddg;
-          print('DDG: Decoded redirect -> $targetLink');
-        }
-      }
-
-      // GUARD: Don't scrape DuckDuckGo itself (ads, y.js, tracking)
-      if (targetLink.contains('duckduckgo.com')) {
-         print('DDG: Skipping internal/ad link: $targetLink');
-         return null;
-      }
-
-      print('DDG: Scaping $targetLink');
-      final pageResp = await _fetchWithProxy(targetLink);
+      print('DDG: Scraping $targetLink');
+      // For Ultimate-Guitar on non-Web, also use Jina proxy so React store is rendered into a <pre> code block
+      final pageResp = (!kIsWeb && targetLink.contains('ultimate-guitar.com'))
+          ? await _fetchViaJinaOrDirect(targetLink)
+          : await _fetchWithProxy(targetLink);
       if (pageResp.statusCode != 200) {
         print('Page Fetch Failed (${pageResp.statusCode}): $targetLink');
         return null;
       }
 
-      final pageDoc = html.parse(pageResp.body);
-      
-      // SPECIAL HANDLING: Ultimate-Guitar store config (where the real tab lives)
-      if (targetLink.contains('ultimate-guitar.com')) {
-         final scripts = pageDoc.querySelectorAll('script');
-         for (final script in scripts) {
-           if (script.text.contains('content') && script.text.contains('[tab]')) {
-             // Try to regex extract the tab content from their JSON store
-             final tabMatch = RegExp(r'&quot;content&quot;:&quot;(.*?)&quot;').firstMatch(script.text);
-             if (tabMatch != null) {
-               String rawVal = tabMatch.group(1) ?? "";
-               // Unescape basic chars
-               rawVal = rawVal.replaceAll(r'\r\n', '\n').replaceAll(r'\n', '\n').replaceAll(r'\"', '"');
-               if (rawVal.length > 50) return "Source (Ultimate-Guitar):\n$rawVal";
-             }
-           }
-         }
-      }
-
-      // 3. Extract best content
-      // Prioritize <pre> tags (tabs), then specific containers
-      final pre = pageDoc.querySelector('js-tab-content') ?? pageDoc.querySelector('pre');
-      if (pre != null && pre.text.length > 50) return "Source (${Uri.parse(targetLink).host}):\n${pre.text}";
-      
-      // Cleanup Body Fallback (Remove Scripts/JSON-LD/Styles)
-      pageDoc.querySelectorAll('script').forEach((e) => e.remove());
-      pageDoc.querySelectorAll('style').forEach((e) => e.remove());
-      pageDoc.querySelectorAll('meta').forEach((e) => e.remove());
-      pageDoc.querySelectorAll('link').forEach((e) => e.remove());
-      pageDoc.querySelectorAll('noscript').forEach((e) => e.remove());
-      
-      var bodyText = pageDoc.body?.text.trim() ?? "";
-      
-      // Post-Processing: Remove lines that look like JSON or CSS
-      // Remove lines starting with { or " or . or @
-      bodyText = bodyText.split('\n').where((line) {
-        final l = line.trim();
-        if (l.isEmpty) return false;
-        if (l.startsWith('{') || l.startsWith('"') || l.startsWith('.') || l.startsWith('@')) return false;
-        if (l.contains('function()')) return false;
-        if (l.length < 3) return false; // fast filter noise
-        return true;
-      }).join('\n');
-
-      return "Source (${Uri.parse(targetLink).host}):\n${bodyText.length > 5000 ? bodyText.substring(0, 5000) : bodyText}";
-
-
-
+      return _extractCleanTabContent(pageResp.body, targetLink);
     } catch (e) {
       print('Scrape error for "$query": $e');
       return null;
     }
+  }
+
+  String? _extractCleanTabContent(String body, String targetLink) {
+    final host = Uri.parse(targetLink).host;
+
+    // Guard against artist directory / index tables
+    if (body.contains('| Band name | # of tabs |') || body.contains('**Artists 0-9**')) {
+      return null;
+    }
+
+    // 1. Check for fenced Markdown code blocks (e.g. Jina Reader on Ultimate-Guitar)
+    final codeBlocks = RegExp(r'```[^\n]*\n([\s\S]*?)```').allMatches(body);
+    for (final match in codeBlocks) {
+      final content = match.group(1)?.trim() ?? '';
+      if (content.length > 50) {
+        return '$content\n\n[Source: $host]';
+      }
+    }
+
+    // 2. Check for Jina Reader Markdown Content (e.g. AZChords / GuitarTabs.cc)
+    const mdMarker = 'Markdown Content:';
+    final mdIdx = body.indexOf(mdMarker);
+    if (mdIdx != -1) {
+      var md = body.substring(mdIdx + mdMarker.length).trim();
+      // Remove markdown images ![...](...)
+      md = md.replaceAll(RegExp(r'!\[[^\]]*\]\([^\)]*\)'), '');
+      // Remove empty markdown links [](...)
+      md = md.replaceAll(RegExp(r'\[\s*\]\([^\)]*\)'), '');
+      // Unwrap markdown links [Chord](url) -> Chord
+      md = md.replaceAllMapped(RegExp(r'\[([^\]]+)\]\(https?:\/\/[^\)]+\)'), (m) => m.group(1) ?? '');
+
+      // Trim header navigation clutter before chord content if present
+      final startMarkers = ['Chords used:', 'Capo ', '[Intro]', '[Verse', 'Verse 1'];
+      for (final marker in startMarkers) {
+        final idx = md.indexOf(marker);
+        if (idx != -1 && idx < 1500) {
+          md = md.substring(idx);
+          break;
+        }
+      }
+
+      md = md.trim();
+      if (md.length > 50) {
+        final clipped = md.length > 6000 ? md.substring(0, 6000) : md;
+        return '$clipped\n\n[Source: $host]';
+      }
+    }
+
+    // 3. Raw HTML Fallback
+    final pageDoc = html.parse(body);
+    final pre = pageDoc.querySelector('js-tab-content') ?? pageDoc.querySelector('pre');
+    if (pre != null && pre.text.trim().length > 50) {
+      return '${pre.text.trim()}\n\n[Source: $host]';
+    }
+
+    pageDoc.querySelectorAll('script, style, meta, link, noscript').forEach((e) => e.remove());
+    var bodyText = pageDoc.body?.text.trim() ?? '';
+    bodyText = bodyText.split('\n').where((line) {
+      final l = line.trim();
+      if (l.isEmpty) return false;
+      if (l.startsWith('{') || l.startsWith('"') || l.startsWith('.') || l.startsWith('@')) return false;
+      if (l.contains('function()')) return false;
+      if (l.length < 3) return false;
+      return true;
+    }).join('\n');
+
+    if (bodyText.length <= 50) return null;
+    final clipped = bodyText.length > 5000 ? bodyText.substring(0, 5000) : bodyText;
+    return '$clipped\n\n[Source: $host]';
+  }
+
+  Future<http.Response> _fetchViaJinaOrDirect(String url) async {
+    try {
+      final response = await http.get(Uri.parse('https://r.jina.ai/$url')).timeout(const Duration(seconds: 10));
+      if (response.statusCode == 200) return response;
+    } catch (_) {}
+    return http.get(Uri.parse(url), headers: {'User-Agent': 'ChordScan/1.0'});
   }
 
   /// Helper to fetch URL with CORS proxy on Web
@@ -278,32 +258,32 @@ class ChordService {
       return http.get(Uri.parse(url), headers: {'User-Agent': 'ChordScan/1.0'});
     }
 
-    // 1. Primary: AllOrigins
+    // 1. Primary: Jina Reader (CORS simple GET request, renders JS tabs cleanly)
     try {
+      final target = 'https://r.jina.ai/$url';
+      final response = await http.get(Uri.parse(target)).timeout(const Duration(seconds: 10));
+      if (response.statusCode == 200) return response;
+      print('Proxy 1 (Jina) failed: ${response.statusCode}');
+    } catch (e) {
+      print('Proxy 1 (Jina) error: $e');
+    }
+
+    // 2. Secondary: cors.lol
+    try {
+      print('Switching to Proxy 2 (cors.lol)...');
+      final target = 'https://api.cors.lol/?url=${Uri.encodeComponent(url)}';
+      final response = await http.get(Uri.parse(target)).timeout(const Duration(seconds: 10));
+      if (response.statusCode == 200) return response;
+      print('Proxy 2 (cors.lol) failed: ${response.statusCode}');
+    } catch (e) {
+      print('Proxy 2 (cors.lol) error: $e');
+    }
+
+    // 3. Tertiary: AllOrigins
+    try {
+      print('Switching to Proxy 3 (AllOrigins)...');
       final target = 'https://api.allorigins.win/raw?url=${Uri.encodeComponent(url)}';
-      final response = await http.get(Uri.parse(target));
-      if (response.statusCode == 200) return response;
-      print('Proxy 1 (AllOrigins) failed: ${response.statusCode}');
-    } catch (e) {
-      print('Proxy 1 (AllOrigins) error: $e');
-    }
-
-    // 2. Secondary: ThingProxy
-    try {
-      print('Switching to Proxy 2 (ThingProxy)...');
-      final target = 'https://thingproxy.freeboard.io/fetch/$url';
-      final response = await http.get(Uri.parse(target));
-      if (response.statusCode == 200) return response;
-      print('Proxy 2 (ThingProxy) failed: ${response.statusCode}');
-    } catch (e) {
-      print('Proxy 2 (ThingProxy) error: $e');
-    }
-
-    // 3. Tertiary: CORSProxy.io (often blocked, but worth a shot)
-    try {
-      print('Switching to Proxy 3 (CORSProxy)...');
-      final target = 'https://corsproxy.io/?${Uri.encodeComponent(url)}';
-      return await http.get(Uri.parse(target));
+      return await http.get(Uri.parse(target)).timeout(const Duration(seconds: 10));
     } catch (e) {
       print('All Proxies Failed for $url: $e');
       rethrow;

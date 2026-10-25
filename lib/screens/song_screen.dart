@@ -104,9 +104,17 @@ class _SongScreenState extends State<SongScreen> {
             title: Text(s?.title ?? 'Song'),
             actions: [
               if (s != null)
+                IconButton(
+                  icon: _loading
+                      ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.refresh),
+                  tooltip: 'Re-fetch Chords',
+                  onPressed: _loading ? null : _fetchChords,
+                ),
+              if (s != null)
                 IconButton(icon: const Icon(Icons.edit), onPressed: _showEditDialog),
               if (s != null)
-                 IconButton(icon: const Icon(Icons.search), onPressed: _launchSearch),
+                IconButton(icon: const Icon(Icons.search), onPressed: _launchSearch),
             ],
           ),
           body: s == null
@@ -117,7 +125,9 @@ class _SongScreenState extends State<SongScreen> {
                     Text(s.title, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
                     Text(s.artist, style: const TextStyle(fontSize: 18, color: Colors.grey)),
                     const SizedBox(height: 16),
-                    if (s.chords == null || s.chords!.isEmpty)
+                    if (s.chords == null ||
+                        s.chords!.isEmpty ||
+                        s.chords!.startsWith('Could not generate chords.')) ...[
                       Center(
                         child: ElevatedButton.icon(
                           onPressed: _loading ? null : _fetchChords,
@@ -126,8 +136,12 @@ class _SongScreenState extends State<SongScreen> {
                               : const Icon(Icons.download),
                           label: Text(_loading ? 'Fetching...' : 'Get Chords'),
                         ),
-                      )
-                    else
+                      ),
+                      if (s.chords != null && s.chords!.isNotEmpty) ...[
+                        const SizedBox(height: 16),
+                        Expanded(child: ChordBox(text: s.chords!)),
+                      ],
+                    ] else
                       Expanded(
                         child: ChordBox(text: s.chords!),
                       ),
